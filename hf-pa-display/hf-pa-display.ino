@@ -33,16 +33,16 @@ extern uint8_t franklingothic_normal[];
 #define vgaValueColor      0x94B2
 #define vgaBarColor        0xCE59
 
-// Init the input and output Pins    
+// Init the input and output Pinsdeb
 #define axPin_reserve0     0
 #define aiPin_pwrForward   1
 #define aiPin_pwrReturn    2
-#define aiPin_drainVoltage 4 //3 //test
+#define aiPin_drainVoltage 3
 #define aiPin_aux1Voltage  4
-#define aiPin_aux2Voltage  4 //5 //test
+#define aiPin_aux2Voltage  5
 #define aiPin_pa1Amper     6
-#define aiPin_pa2Amper     6 //7 //test
-#define aiPin_temperatur   4 //8 //test
+#define aiPin_pa2Amper     7
+#define aiPin_temperatur   8
 // digital pin 0-8 used by UTFT
 #define diPin_ptt          8
 #define doPin_ptt          9
@@ -55,7 +55,7 @@ extern uint8_t franklingothic_normal[];
 #define dxPin_reserve16   16
 #define dxPin_reserve17   17
 #define dxPin_reserve18   18
-#define diPin_cat         19 //Serail Port 1 RX
+#define siPin_cat         19 //Serial Port 1 RX
 // digital pin 22-53 used by UTFT
 #define doPin_freqBand1   64
 #define doPin_freqBand2   65
@@ -63,6 +63,14 @@ extern uint8_t franklingothic_normal[];
 #define doPin_freqBand4   67
 #define doPin_freqBand5   68
 #define doPin_freqBand6   69
+
+// Define ICOM Interface
+#define catBaudRate       4800
+#define civMessageStart   0xFE
+#define civMessageEnd     0xFD
+unsigned char civData, civDataArray[16];
+unsigned long civMhz100, civMhz, civKhz, civHz;
+float civQrg;
       
 // Define the analogValue variables
 float pwrForwardValue;
@@ -73,6 +81,7 @@ float aux2VoltageValue;
 float pa1AmperValue;
 float pa2AmperValue;
 float temperaturValue;
+float frequenceValue;
   
 // Define the boolValue variables
 bool pttValue;
@@ -85,8 +94,7 @@ bool SWRmaxValue;
 #define pwrForwardFactor (inputFactorVoltage * (2400.0/5.0))
 #define pwrReturnFactor (inputFactorVoltage * (200.0/5.0))
 #define drainVoltageFactor (inputFactorVoltage * (60.0/5.0)) // 5V Input = 60V PA
-// #define aux1VoltageFactor (inputFactorVoltage * (30.0/5.0)) // 5V Input = 30V PA //org
-#define aux1VoltageFactor (inputFactorVoltage * (28.0/5.0)) // 5V Input = 30V PA //test
+#define aux1VoltageFactor (inputFactorVoltage * (30.0/5.0)) // 5V Input = 30V PA
 #define aux2VoltageFactor (inputFactorVoltage * (15.0/5.0)) // 5V Input = 15V PA
 #define pa1AmperFactor (inputFactorVoltage  * (50.0/2,5)) // 2,5V Input = 50A PA
 #define pa2AmperFactor (inputFactorVoltage * (50.0/2,5)) // 2,5V Input = 50A PA
@@ -188,7 +196,6 @@ char* morseNumbers[] = {
   "---..",   // 8
   "----."    // 9
 };
-
 
 class InfoBox
 {
@@ -737,7 +744,46 @@ void morse()
       morseStep = 0;
       break;
    }  
-  }    
+  }
+
+float getCatFrequency(void)
+{  
+  if (Serial1.available() and Serial1.read() == civMessageStart)
+  {
+    //Serial.println("data available and start ");
+    for (int readIndex = 1; readIndex <= 16; readIndex++)
+    {
+      if (Serial1.available() )
+      {
+        civData = civDataArray[readIndex] = Serial1.read();
+        if (civData == civMessageEnd)
+        {
+          break;
+        }
+      }
+    }
+
+    if (civDataArray[4] == 0)
+    {
+      civMhz100 = civDataArray[9];
+
+      civMhz = civDataArray[8];
+      civMhz = civMhz - (((civMhz / 16) * 6));
+
+      civKhz = civDataArray[7];
+      civKhz = civKhz - (((civKhz / 16) * 6));
+
+      civHz = civDataArray[6];
+      civHz = civHz - (((civHz / 16) * 6));
+
+      civQrg = (civMhz100 * 100) + civMhz + (civKhz / 100.0) + (civHz / 10000);
+      if (civQrg > 0)
+      {
+        return (civQrg);
+      }   
+    }
+  }  
+}
   
 // SETUP the grafic objects
 //                        title         unit    xPos  yPos  height  width, _minValue,  _maxValue,  colorValue       colorBack             font
@@ -763,12 +809,15 @@ DisplayBar pwrBar(        "PWR",        "W",    20,   126,   80,    760,   0,   
 DisplayBar swrBar(        "SWR",        "",     20,   226,   80,    760,   1,          5,         3,          4,          vgaBarColor,   vgaBackgroundColor, 16 );
 
 void setup()
-{
+{  
   // Run the setup and init everything 
   if (debug == true)
   {
     Serial.begin(9600);
   }
+  
+  Serial1.begin(catBaudRate);
+  
   myGLCD.InitLCD();
   myGLCD.clrScr();
 
@@ -782,6 +831,29 @@ void setup()
   pinMode(doPin_freqBand5, OUTPUT);
   pinMode(doPin_freqBand6, OUTPUT);
   pinMode(doPin_Sound, OUTPUT);
+
+  myGLCD.setFont(GroteskBold32x64);
+  myGLCD.setColor(vgaValueColor);
+  //myGLCD.print("Solid State Power Amplifier  2kW", CENTER, 75);
+  myGLCD.print("SSPA  2kW", CENTER, 50);
+  myGLCD.setFont(Grotesk16x32);
+  
+  myGLCD.print("2 x BLF 188XR", CENTER, 150);
+  myGLCD.print("160m - 6m", CENTER, 200);
+
+  myGLCD.setFont(franklingothic_normal);
+  
+  myGLCD.print("TNX", CENTER, 290);
+  myGLCD.print("DC5ME DF1AI DG2MEL DG8DP DL3MBG", CENTER, 325);
+  myGLCD.print("DL6MFK DL9MBI DO1FKP DO5HT", CENTER, 350);
+  myGLCD.print("K8FOD ON7PQ UA3QLC W6PQL", CENTER, 375);
+  myGLCD.print("de DJ8QP", CENTER, 410);
+  while (myTouch.dataAvailable()== false)
+  {
+   delay(30);
+  }
+     
+  myGLCD.clrScr();
     
   // Set call sign and version
   myGLCD.setFont(nadianne);
@@ -789,7 +861,7 @@ void setup()
   myGLCD.print("DJ8QP ", RIGHT, 20);
   myGLCD.print("DC5ME ", RIGHT, 40);
   myGLCD.setFont(SmallFont);
-  myGLCD.print("V1.5  ", RIGHT, 60);
+  myGLCD.print("V1.8  ", RIGHT, 60);
   
   // Init the grafic objects
   frequencyBox.init();
@@ -817,7 +889,28 @@ void loop()
 {  
   // Run the main loop
   timeAtCycleStart = millis();
+  
   morse();
+
+  frequenceValue = getCatFrequency();
+  if(frequenceValue>1 and frequenceValue<467) 
+  {
+    modeBox.setText(modeAutoName);    
+       
+    if (frequenceValue>=100)
+    {
+      frequencyBox.setFloat(  frequenceValue, 2,  6, true);
+    }
+    else if (frequenceValue>=10)
+    {
+      frequencyBox.setFloat(  frequenceValue, 3,  6, true); 
+    }
+    else
+    {
+      frequencyBox.setFloat(  frequenceValue, 4,  6, true); 
+    }
+  }
+  
   // Read touch X and Y values  
   if (myTouch.dataAvailable())
     {    
@@ -832,7 +925,7 @@ void loop()
       myGLCD.setColor(vgaTitleUnitColor);
       myGLCD.setFont(SmallFont);  
       myGLCD.printNumI(touchX, 710, 85);  
-      myGLCD.printNumI(touchY, 750, 85);            
+      myGLCD.printNumI(touchY, 750, 85);                 
       }
     }
 
@@ -849,36 +942,39 @@ void loop()
 
   pttValue = not digitalRead(diPin_ptt);
   stbyValue = digitalRead(diPin_stby);
-  ImaxValue = digitalRead(diPin_Imax);
-  PmaxValue = digitalRead(diPin_Pmax);
-  SWRmaxValue = digitalRead(diPin_SWRmax);
+  ImaxValue = not digitalRead(diPin_Imax);
+  PmaxValue = not digitalRead(diPin_Pmax);
+  SWRmaxValue = not digitalRead(diPin_SWRmax);
 
   if (debug == true)
     {      
+    
     Serial.println("---------------------");
-
+    
     Serial.print("ptt");
     Serial.println(pttValue);
     Serial.print("stby");
     Serial.println(stbyValue);
 
-    Serial.print("pwrForward");
+    Serial.print("pwrForward: ");
     Serial.println(pwrForwardValue);
-    Serial.print("pwrReturn");
+    Serial.print("pwrReturn: ");
     Serial.println(pwrReturnValue);
-    Serial.print("drainVoltage");
+    Serial.print("drainVoltage: ");
     Serial.println(drainVoltageValue);
-    Serial.print("aux1Voltage");
+    Serial.print("aux1Voltage: ");
     Serial.println(aux1VoltageValue);
-    Serial.print("aux2Voltage");
+    Serial.print("aux2Voltage: ");
     Serial.println(aux2VoltageValue);
-    Serial.print("pa1Amper");
+    Serial.print("pa1Amper: ");
     Serial.println(pa1AmperValue);
-    Serial.print("pa2Amper");
+    Serial.print("pa2Amper: ");
     Serial.println(pa2AmperValue);
-    Serial.print("temperatur");
-    Serial.println(temperaturValue);       
-    }
+    Serial.print("temperatur: ");
+    Serial.println(temperaturValue);    
+    Serial.print("frequenceValue: ");
+    Serial.println(frequenceValue);        
+  }
     
   //-----------------------------------------------------------------------------  
   // Set display values. The widgets monitors the values and output an errorString 
@@ -1064,7 +1160,7 @@ void loop()
       genOutputEnable = true;
       infoString = "Startup completed.";
       morseNewMsg = "73 ";
-    }  
+    }    
   }
 
   // Reset genOutputEnable on any errorString
@@ -1136,6 +1232,7 @@ void loop()
     else
     {
       errorString = "Frequency does not fit to any band";
+      morseNewMsg = "err qrg ";
     }
     bandBox.setText(BAND[bandIdx]);
   }
