@@ -33,7 +33,7 @@ extern uint8_t franklingothic_normal[];
 #define vgaValueColor      0x94B2
 #define vgaBarColor        0xCE59
 
-// Init the input and output Pinsdeb
+// Init the input and output Pins
 #define axPin_reserve0     0
 #define aiPin_pwrForward   1
 #define aiPin_pwrReturn    2
@@ -52,7 +52,7 @@ extern uint8_t franklingothic_normal[];
 #define diPin_SWRmax      13
 #define doPin_Sound       14
 #define doPin_air         15
-#define dxPin_reserve16   16
+#define doPin_errLED      16
 #define dxPin_reserve17   17
 #define dxPin_reserve18   18
 #define siPin_cat         19 //Serial Port 1 RX
@@ -65,7 +65,7 @@ extern uint8_t franklingothic_normal[];
 #define doPin_freqBand6   69
 
 // Define ICOM Interface
-#define catBaudRate       4800
+#define catBaudRate       1200
 #define civMessageStart   0xFE
 #define civMessageEnd     0xFD
 unsigned char civData, civDataArray[16];
@@ -89,28 +89,31 @@ bool stbyValue;
 bool ImaxValue;
 bool PmaxValue;
 bool SWRmaxValue;
+bool errLedValue;
   
 #define inputFactorVoltage (5.0/1023.0)
-#define pwrForwardFactor (inputFactorVoltage * (2400.0/5.0))
+#define pwrForwardFactor (inputFactorVoltage * (320.0/5.0))
 #define pwrReturnFactor (inputFactorVoltage * (200.0/5.0))
-#define drainVoltageFactor (inputFactorVoltage * (60.0/5.0)) // 5V Input = 60V PA
+#define drainVoltageFactor (inputFactorVoltage * (60.0/5.0))// 5V Input = 60V PA
 #define aux1VoltageFactor (inputFactorVoltage * (30.0/5.0)) // 5V Input = 30V PA
 #define aux2VoltageFactor (inputFactorVoltage * (15.0/5.0)) // 5V Input = 15V PA
-#define pa1AmperFactor (inputFactorVoltage  * (50.0/2,5)) // 2,5V Input = 50A PA
-#define pa2AmperFactor (inputFactorVoltage * (50.0/2,5)) // 2,5V Input = 50A PA
-#define temperaturFactor (inputFactorVoltage * (25.0/5.0)) // erstmal nur spannungswert
+#define pa1AmperFactor (inputFactorVoltage * (62.5/2.5))    // 40mV/A
+#define pa1AmperOffset (1023/5 * 2.505)                     // 2.5V
+#define pa2AmperFactor (inputFactorVoltage * (62.5/2.5))    // 40mV/A
+#define pa2AmperOffset (1023/5 * 2.505)                     // 2.5V 
+#define temperaturFactor (inputFactorVoltage * (100.0/5.0)) // 5V = 100°C
 
-#define modeManualName "MANUAL"
+#define modeManualName "MANUELL"
 #define modeAutoName   "AUTO"
 
-#define freqBand1Name "160"
-#define freqBand2Name "80"
-#define freqBand3Name "60-40-30"
-#define freqBand4Name "20-17"
-#define freqBand5Name "15-12-10"
-#define freqBand6Name "6"
+#define freqBand1Name "    160"
+#define freqBand2Name "    80"
+#define freqBand3Name " 60-40-30"
+#define freqBand4Name "   20-17"
+#define freqBand5Name " 15-12-10"
+#define freqBand6Name "     6"
 String BAND[6] = {freqBand1Name,freqBand2Name,freqBand3Name,freqBand4Name,freqBand5Name,freqBand6Name};
-int bandIdx = 2;
+int bandIdx = 2, bandIdxTemp=0;
 
 #define thresholdCurrent           1.0
 #define thresholdPower             5.0
@@ -127,8 +130,9 @@ int touchX = -1;
 int touchY = -1;
 
 #define debug false
-unsigned long timeAtCycleStart, timeAtCycleEnd, timeStartMorseDownTime, actualCycleTime;
+unsigned long timeAtCycleStart, timeAtCycleEnd, timeStartMorseDownTime, actualCycleTime, timeToogle500ms=0;
 int drawWidgetIndex;
+bool toogle500ms;
   
 #define cycleTime        30
 
@@ -802,7 +806,7 @@ InfoBox temperaturBox(    "",           "`C",   320,  380,  32,     125,   10,  
 InfoBox emptyBox(         "",           "",     470,  380,  32,     125,   0,          0,          vgaValueColor,   vgaBackgroundColor,   GroteskBold16x32);
 
 InfoBox msgBox(           "",           "",     20,   420,   32,    760,   0,          0,          vgaValueColor,   vgaBackgroundColor,   Grotesk16x32);
-InfoBox txRxBox(          "",           "",     655,  340,   72,    125,   0,          0,          vgaValueColor,   vgaBackgroundColor,   GroteskBold16x32);
+InfoBox txRxBox(          "",           "",     645,  340,   72,    135,   0,          0,          vgaValueColor,   vgaBackgroundColor,   GroteskBold32x64);
 
 //                        title,        unit,  xPos,  yPos,  height,width, minValue,   maxValue,  warnValue1, warnValue2, colorBar,      colorBack,          noOffHelplines
 DisplayBar pwrBar(        "PWR",        "W",    20,   126,   80,    760,   0,          2500,      750,        1750,       vgaBarColor,   vgaBackgroundColor, 10 );
@@ -831,28 +835,27 @@ void setup()
   pinMode(doPin_freqBand5, OUTPUT);
   pinMode(doPin_freqBand6, OUTPUT);
   pinMode(doPin_Sound, OUTPUT);
+  pinMode(doPin_air, OUTPUT);
+ 
 
   myGLCD.setFont(GroteskBold32x64);
   myGLCD.setColor(vgaValueColor);
-  //myGLCD.print("Solid State Power Amplifier  2kW", CENTER, 75);
-  myGLCD.print("SSPA  2kW", CENTER, 50);
+  myGLCD.print("LDMOS-PA  2kW", CENTER, 50);
   myGLCD.setFont(Grotesk16x32);
-  
-  myGLCD.print("2 x BLF 188XR", CENTER, 150);
-  myGLCD.print("160m - 6m", CENTER, 200);
-
+  myGLCD.print("160m - 6m", CENTER, 150);  
+  myGLCD.print("2 x BLF 188XR", CENTER, 200);
+ 
   myGLCD.setFont(franklingothic_normal);
   
-  myGLCD.print("TNX", CENTER, 290);
-  myGLCD.print("DC5ME DF1AI DG2MEL DG8DP DL3MBG", CENTER, 325);
-  myGLCD.print("DL6MFK DL9MBI DO1FKP DO5HT", CENTER, 350);
-  myGLCD.print("K8FOD ON7PQ UA3QLC W6PQL", CENTER, 375);
-  myGLCD.print("de DJ8QP", CENTER, 410);
+  myGLCD.print("TNX TO", CENTER, 290);
+  myGLCD.print("DC5ME DF1AI DG2MEL DL3MBG DL6MFK", CENTER, 325);
+  myGLCD.print("DL9MBI DO1FKP DO5HT K8FOD ON7PQ", CENTER, 350); 
+  myGLCD.print("DE DJ8QP", CENTER, 375);
   while (myTouch.dataAvailable()== false)
   {
    delay(30);
   }
-     
+       
   myGLCD.clrScr();
     
   // Set call sign and version
@@ -861,7 +864,7 @@ void setup()
   myGLCD.print("DJ8QP ", RIGHT, 20);
   myGLCD.print("DC5ME ", RIGHT, 40);
   myGLCD.setFont(SmallFont);
-  myGLCD.print("V1.8  ", RIGHT, 60);
+  myGLCD.print("V1.9.0  ", RIGHT, 60);
   
   // Init the grafic objects
   frequencyBox.init();
@@ -891,6 +894,12 @@ void loop()
   timeAtCycleStart = millis();
   
   morse();
+
+  if ((timeAtCycleStart - timeToogle500ms) > 500)
+  {
+    toogle500ms = not toogle500ms;
+    timeToogle500ms = timeAtCycleStart;
+  }
 
   frequenceValue = getCatFrequency();
   if(frequenceValue>1 and frequenceValue<467) 
@@ -931,24 +940,23 @@ void loop()
 
   //-----------------------------------------------------------------------------
   // Read all inputs
-  pwrForwardValue = analogRead(aiPin_pwrForward) * pwrForwardFactor; 
-  pwrReturnValue = analogRead(aiPin_pwrReturn)* pwrReturnFactor;
-  drainVoltageValue = analogRead(aiPin_drainVoltage)* drainVoltageFactor;
-  aux1VoltageValue = analogRead(aiPin_aux1Voltage)* aux1VoltageFactor;
-  aux2VoltageValue = analogRead(aiPin_aux2Voltage)*aux2VoltageFactor;
-  pa1AmperValue = analogRead(aiPin_pa1Amper) * pa1AmperFactor;
-  pa2AmperValue = analogRead(aiPin_pa2Amper) * pa2AmperFactor;
-  temperaturValue = analogRead(aiPin_temperatur) * temperaturFactor;
+  pwrForwardValue = sq(analogRead(aiPin_pwrForward) * pwrForwardFactor)/50; 
+  pwrReturnValue = analogRead(aiPin_pwrReturn) * pwrReturnFactor;
+  drainVoltageValue = analogRead(aiPin_drainVoltage) * drainVoltageFactor;
+  aux1VoltageValue = analogRead(aiPin_aux1Voltage) * aux1VoltageFactor;
+  aux2VoltageValue = analogRead(aiPin_aux2Voltage) * aux2VoltageFactor;
+  pa1AmperValue = (analogRead(aiPin_pa1Amper) - pa1AmperOffset) * pa1AmperFactor;
+  pa2AmperValue = (analogRead(aiPin_pa2Amper) - pa2AmperOffset) * pa2AmperFactor;  
+  temperaturValue = (1023.0 - analogRead(aiPin_temperatur)) * temperaturFactor; //NTC
 
   pttValue = not digitalRead(diPin_ptt);
   stbyValue = digitalRead(diPin_stby);
-  ImaxValue = not digitalRead(diPin_Imax);
-  PmaxValue = not digitalRead(diPin_Pmax);
-  SWRmaxValue = not digitalRead(diPin_SWRmax);
+  ImaxValue = digitalRead(diPin_Imax);
+  PmaxValue = digitalRead(diPin_Pmax);
+  SWRmaxValue = digitalRead(diPin_SWRmax);
 
   if (debug == true)
     {      
-    
     Serial.println("---------------------");
     
     Serial.print("ptt");
@@ -969,11 +977,15 @@ void loop()
     Serial.print("pa1Amper: ");
     Serial.println(pa1AmperValue);
     Serial.print("pa2Amper: ");
-    Serial.println(pa2AmperValue);
+    Serial.println(pa2AmperValue);    
     Serial.print("temperatur: ");
     Serial.println(temperaturValue);    
     Serial.print("frequenceValue: ");
-    Serial.println(frequenceValue);        
+    Serial.println(frequenceValue);    
+    Serial.print("input:      ");
+    Serial.println(analogRead(aiPin_temperatur));    
+    Serial.print("temperatur: ");
+    Serial.println(temperaturValue);               
   }
     
   //-----------------------------------------------------------------------------  
@@ -996,10 +1008,10 @@ void loop()
   aux1VoltageBox.setFloat(  aux1VoltageValue,   1,  4, drawWidgetIndex==6 );
   aux2VoltageBox.setFloat(  aux2VoltageValue,   1,  4, drawWidgetIndex==7 );
   pa1AmperBox.setFloat(     pa1AmperValue,      1,  4, drawWidgetIndex==8 );
-  pa2AmperBox.setFloat(     pa1AmperValue,      1,  4, drawWidgetIndex==9 );
+  pa2AmperBox.setFloat(     pa2AmperValue,      1,  4, drawWidgetIndex==9 );
   temperaturBox.setFloat(   temperaturValue,    1,  4, drawWidgetIndex==10 ); 
 
-  // Draw index defines the infoBox that can draw new values on tht utft. 
+  // Draw index defines the infoBox that can draw new values on the utft. 
   // If all infoBoxes would draw together, the cycletime is to long and not constant for the morse output.
   if (drawWidgetIndex==10)
   {
@@ -1028,8 +1040,8 @@ void loop()
       errorString  = "Error: Protector SWR max detected";
       morseNewMsg = "err swr ";
     }
-  }  
-      
+  }
+        
   //-----------------------------------------------------------------------------
   // Touch events
   if (touchX != -1 and touchY!=-1)
@@ -1183,13 +1195,13 @@ void loop()
     {      
       txRxBox.setColorValue(vgaBackgroundColor);
       txRxBox.setColorBack(VGA_RED);
-      txRxBox.setText("TX");  
+      txRxBox.setText(" TX");  
     }
     else
     {
       txRxBox.setColorValue(vgaBackgroundColor);
       txRxBox.setColorBack(VGA_GREEN);
-      txRxBox.setText("RX");
+      txRxBox.setText("OPR");
     } 
   }
   
@@ -1197,7 +1209,7 @@ void loop()
   {
     airBox.setText("ON");    
   }
-  else if (temperaturValue <= thresholdTemperaturAirOn-5)
+  else if (temperaturValue <= thresholdTemperaturAirOn-2)
   {
     airBox.setText("OFF");    
   }
@@ -1236,6 +1248,13 @@ void loop()
     }
     bandBox.setText(BAND[bandIdx]);
   }
+
+  // On band changed: morse
+  if (bandIdx != bandIdxTemp)
+  {
+    morseNewMsg = "b ";
+  }
+  bandIdxTemp = bandIdx;
 
   //-----------------------------------------------------------------------------
   // Write to outputs
@@ -1278,6 +1297,15 @@ void loop()
     {digitalWrite(doPin_freqBand5, true);}
     else if( bandIdx == 5 )
     {digitalWrite(doPin_freqBand6, true);}
+  }
+  
+  if ((ImaxValue or PmaxValue or SWRmaxValue) and toogle500ms)
+  {     
+    digitalWrite(doPin_errLED, true);    
+  }
+  else 
+  {
+    digitalWrite(doPin_errLED, false);    
   }
  
   //-----------------------------------------------------------------------------
